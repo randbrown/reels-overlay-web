@@ -169,6 +169,19 @@ const opts = {
   codeOverlay: document.getElementById("codeOverlay"),
 };
 
+function bindRangeValue(input) {
+  const valueEl = document.querySelector(`.value[data-for="${input.id}"]`);
+  if (!valueEl) return;
+  const update = () => {
+    valueEl.textContent = input.value;
+  };
+  update();
+  input.addEventListener("input", update);
+  input.addEventListener("change", update);
+}
+
+document.querySelectorAll('input[type="range"]').forEach(bindRangeValue);
+
 let vision = null;
 let pose = null;
 

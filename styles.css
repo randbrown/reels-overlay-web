@@ -61,7 +61,7 @@ canvas {
 
 label.row {
   display: grid;
-  grid-template-columns: 160px 1fr;
+  grid-template-columns: 160px 1fr 64px;
   align-items: center;
   gap: 12px;
   font-size: 14px;
@@ -70,6 +70,12 @@ label.row {
 label.row > span {
   text-align: left;
   opacity: 0.95;
+}
+
+label.row > .value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
 }
 
 input[type="range"] {
@@ -118,6 +124,6 @@ input[type="range"]::-webkit-slider-runnable-track {
 
 @media (max-width: 420px) {
   label.row {
-    grid-template-columns: 130px 1fr;
+    grid-template-columns: 130px 1fr 56px;
   }
 }
