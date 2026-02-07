@@ -12,18 +12,36 @@
   <input type="file" id="fileInput" accept="video/*" />
 
   <div class="controls">
-    <label><input type="checkbox" id="trail" checked> Trails</label>
-    <label>Trail Alpha <input type="range" id="trailAlpha" min="0" max="1" step="0.01" value="0.9"></label>
 
-    <label><input type="checkbox" id="drawIds"> Draw IDs</label>
-    <label><input type="checkbox" id="velocityColor"> Velocity Color</label>
+    <label><input type="checkbox" id="trail" checked> Trails</label>
+
+    <label>
+      Trail Alpha
+      <input type="range" id="trailAlpha" min="0.5" max="0.98" step="0.01" value="0.85">
+    </label>
+
+    <label>
+      Smoothing
+      <input type="range" id="smoothing" min="0.5" max="0.95" step="0.01" value="0.75">
+    </label>
+
+    <label><input type="checkbox" id="drawIds" checked> Draw IDs</label>
+
+    <label><input type="checkbox" id="velocityColor" checked> Velocity Color</label>
+
     <label><input type="checkbox" id="scanlines" checked> Scanlines</label>
 
-    <label><input type="checkbox" id="codeOverlay"> Code Overlay</label>
+    <label>
+      Scanline Strength
+      <input type="range" id="scanStrength" min="0.02" max="0.25" step="0.01" value="0.12">
+    </label>
+
+    <label><input type="checkbox" id="codeOverlay" checked> Code Overlay</label>
+
   </div>
 
   <canvas id="view"></canvas>
-<script type="module" src="./app.js"></script>
-  
+
+  <script type="module" src="./app.js"></script>
 </body>
 </html>
