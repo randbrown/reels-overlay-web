@@ -19,6 +19,37 @@ const canvas = document.getElementById("view");
 const ctx = canvas.getContext("2d");
 
 const fileInput = document.getElementById("fileInput");
+const statusEl = document.getElementById("status");
+const playBtn = document.getElementById("playBtn");
+const pauseBtn = document.getElementById("pauseBtn");
+const restartBtn = document.getElementById("restartBtn");
+
+// Disable playback controls until a video is loaded
+playBtn.disabled = true;
+pauseBtn.disabled = true;
+restartBtn.disabled = true;
+
+function setStatus(message, isError = false) {
+  if (!statusEl) return;
+  statusEl.textContent = message;
+  statusEl.classList.toggle("error", isError);
+}
+
+function describeMediaError(error) {
+  if (!error) return "Unknown media error";
+  switch (error.code) {
+    case MediaError.MEDIA_ERR_ABORTED:
+      return "Video loading was aborted.";
+    case MediaError.MEDIA_ERR_NETWORK:
+      return "Network error while loading the video.";
+    case MediaError.MEDIA_ERR_DECODE:
+      return "Decode error (unsupported codec or corrupted file).";
+    case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+      return "Video format not supported by the browser.";
+    default:
+      return "Unknown media error.";
+  }
+}
 
 const opts = {
   trail: document.getElementById("trail"),
@@ -204,10 +235,247 @@ function drawScanlines() {
 
 // Current video element (created dynamically)
 let currentVideo = null;
+let lastDetectedPoses = null;
+let lastTimestamp = null;
+
+// Function to process and draw a single frame
+function processFrame(video, timestamp) {
+  // 1) Draw video frame (also computes fit transform for landmark mapping)
+  drawFitted(video);
+
+  // 2) Pose detection
+  const results = pose.detectForVideo(video, timestamp);
+  const poses = results.landmarks || [];
+
+  // Store for potential redraw when paused
+  lastDetectedPoses = poses;
+  lastTimestamp = timestamp;
+
+  // Resize prevPoses list to match number of returned poses
+  while (prevPoses.length < poses.length) prevPoses.push(null);
+  if (prevPoses.length > poses.length) prevPoses = prevPoses.slice(0, poses.length);
+
+  // 3) Fade trail buffer
+  if (opts.trail.checked) {
+    const fade = parseFloat(opts.trailFade.value);
+    trailCtx.save();
+    trailCtx.globalCompositeOperation = "destination-in";
+    trailCtx.fillStyle = `rgba(0,0,0,${fade})`;
+    trailCtx.fillRect(0, 0, trailCanvas.width, trailCanvas.height);
+    trailCtx.restore();
+
+    trailCtx.globalAlpha = parseFloat(opts.trailDrawAlpha.value);
+  } else {
+    trailCtx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
+    trailCtx.globalAlpha = 1.0;
+  }
+
+  // 4) Draw each pose
+  for (let p = 0; p < poses.length; p++) {
+    const cur = poses[p];
+    const prev = prevPoses[p];
+    const smoothed = smoothLandmarks(cur, prev);
+    prevPoses[p] = smoothed;
+
+    // connections
+    for (const [a, b] of POSE_CONNECTIONS) {
+      const la = smoothed[a];
+      const lb = smoothed[b];
+      if (!isValid(la, a) || !isValid(lb, b)) continue;
+
+      const A = lmToCanvas(la);
+      const B = lmToCanvas(lb);
+
+      let color = "white";
+      if (opts.velocityColor.checked && prev) {
+        const pa = prev[a];
+        const pb = prev[b];
+        const Ap = lmToCanvas(pa);
+        const Bp = lmToCanvas(pb);
+        const v = Math.max(
+          Math.hypot(A.x - Ap.x, A.y - Ap.y),
+          Math.hypot(B.x - Bp.x, B.y - Bp.y)
+        );
+        color = velocityToColor(v);
+      }
+
+      trailCtx.strokeStyle = color;
+      trailCtx.lineWidth = 2;
+      trailCtx.beginPath();
+      trailCtx.moveTo(A.x, A.y);
+      trailCtx.lineTo(B.x, B.y);
+      trailCtx.stroke();
+    }
+
+    // face V-shape
+    for (const [a, b] of FACE_CONNECTIONS) {
+      const la = smoothed[a];
+      const lb = smoothed[b];
+      if (!isValid(la, a) || !isValid(lb, b)) continue;
+
+      const A = lmToCanvas(la);
+      const B = lmToCanvas(lb);
+
+      trailCtx.strokeStyle = "white";
+      trailCtx.lineWidth = 2;
+      trailCtx.beginPath();
+      trailCtx.moveTo(A.x, A.y);
+      trailCtx.lineTo(B.x, B.y);
+      trailCtx.stroke();
+    }
+
+    // joints + IDs
+    for (let i = 0; i < smoothed.length; i++) {
+      const lm = smoothed[i];
+      if (!isValid(lm, i)) continue;
+
+      const P = lmToCanvas(lm);
+
+      let color = "white";
+      if (opts.velocityColor.checked && prev) {
+        const pp = lmToCanvas(prev[i]);
+        const v = Math.hypot(P.x - pp.x, P.y - pp.y);
+        color = velocityToColor(v);
+      }
+
+      trailCtx.fillStyle = color;
+      trailCtx.beginPath();
+      trailCtx.arc(P.x, P.y, 3, 0, Math.PI * 2);
+      trailCtx.fill();
+
+      if (opts.drawIds.checked) {
+        ctx.fillStyle = color;
+        ctx.font = `${opts.idSize.value}px system-ui, sans-serif`;
+        ctx.fillText(String(i), P.x + 8, P.y - 8);
+      }
+    }
+  }
+
+  // 5) Composite trails
+  ctx.drawImage(trailCanvas, 0, 0);
+
+  // 6) Scanlines
+  if (opts.scanlines.checked) drawScanlines();
+}
+
+// Function to redraw current frame (used when paused)
+function redrawCurrentFrame() {
+  if (!currentVideo || !lastDetectedPoses || lastTimestamp === null) return;
+  
+  // Redraw video frame
+  drawFitted(currentVideo);
+
+  // Use stored poses but re-apply current visual settings
+  const poses = lastDetectedPoses;
+
+  // Reapply trail fade
+  if (opts.trail.checked) {
+    const fade = parseFloat(opts.trailFade.value);
+    trailCtx.save();
+    trailCtx.globalCompositeOperation = "destination-in";
+    trailCtx.fillStyle = `rgba(0,0,0,${fade})`;
+    trailCtx.fillRect(0, 0, trailCanvas.width, trailCanvas.height);
+    trailCtx.restore();
+
+    trailCtx.globalAlpha = parseFloat(opts.trailDrawAlpha.value);
+  } else {
+    trailCtx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
+    trailCtx.globalAlpha = 1.0;
+  }
+
+  // Redraw each pose with current settings
+  for (let p = 0; p < poses.length; p++) {
+    const cur = poses[p];
+    const prev = prevPoses[p];
+    const smoothed = smoothLandmarks(cur, prev);
+    prevPoses[p] = smoothed;
+
+    // connections
+    for (const [a, b] of POSE_CONNECTIONS) {
+      const la = smoothed[a];
+      const lb = smoothed[b];
+      if (!isValid(la, a) || !isValid(lb, b)) continue;
+
+      const A = lmToCanvas(la);
+      const B = lmToCanvas(lb);
+
+      let color = "white";
+      if (opts.velocityColor.checked && prev) {
+        const pa = prev[a];
+        const pb = prev[b];
+        const Ap = lmToCanvas(pa);
+        const Bp = lmToCanvas(pb);
+        const v = Math.max(
+          Math.hypot(A.x - Ap.x, A.y - Ap.y),
+          Math.hypot(B.x - Bp.x, B.y - Bp.y)
+        );
+        color = velocityToColor(v);
+      }
+
+      trailCtx.strokeStyle = color;
+      trailCtx.lineWidth = 2;
+      trailCtx.beginPath();
+      trailCtx.moveTo(A.x, A.y);
+      trailCtx.lineTo(B.x, B.y);
+      trailCtx.stroke();
+    }
+
+    // face V-shape
+    for (const [a, b] of FACE_CONNECTIONS) {
+      const la = smoothed[a];
+      const lb = smoothed[b];
+      if (!isValid(la, a) || !isValid(lb, b)) continue;
+
+      const A = lmToCanvas(la);
+      const B = lmToCanvas(lb);
+
+      trailCtx.strokeStyle = "white";
+      trailCtx.lineWidth = 2;
+      trailCtx.beginPath();
+      trailCtx.moveTo(A.x, A.y);
+      trailCtx.lineTo(B.x, B.y);
+      trailCtx.stroke();
+    }
+
+    // joints + IDs
+    for (let i = 0; i < smoothed.length; i++) {
+      const lm = smoothed[i];
+      if (!isValid(lm, i)) continue;
+
+      const P = lmToCanvas(lm);
+
+      let color = "white";
+      if (opts.velocityColor.checked && prev) {
+        const pp = lmToCanvas(prev[i]);
+        const v = Math.hypot(P.x - pp.x, P.y - pp.y);
+        color = velocityToColor(v);
+      }
+
+      trailCtx.fillStyle = color;
+      trailCtx.beginPath();
+      trailCtx.arc(P.x, P.y, 3, 0, Math.PI * 2);
+      trailCtx.fill();
+
+      if (opts.drawIds.checked) {
+        ctx.fillStyle = color;
+        ctx.font = `${opts.idSize.value}px system-ui, sans-serif`;
+        ctx.fillText(String(i), P.x + 8, P.y - 8);
+      }
+    }
+  }
+
+  // Composite trails
+  ctx.drawImage(trailCanvas, 0, 0);
+
+  // Scanlines
+  if (opts.scanlines.checked) drawScanlines();
+}
 
 fileInput.onchange = async (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
+
+  setStatus(`Loading: ${file.name} (${Math.round(file.size / 1024 / 1024)} MB)`);
 
   // Create a fresh video element each time
   const video = document.createElement("video");
@@ -216,11 +484,69 @@ fileInput.onchange = async (e) => {
   video.playsInline = true;
   video.muted = true;
   video.autoplay = true;
+  video.preload = "auto";
 
   video.src = URL.createObjectURL(file);
+  video.load();
 
-  await new Promise((resolve) => (video.onloadeddata = resolve));
-  await video.play();
+  const canPlay = video.canPlayType(file.type);
+  if (!canPlay) {
+    setStatus(
+      `This file may use a codec your browser can't play (${file.type || "unknown type"}). ` +
+      "Try re-encoding to H.264 (AVC) + AAC.",
+      true
+    );
+  }
+
+  const metaLoaded = await new Promise((resolve) => {
+    video.onloadedmetadata = () => resolve(true);
+    video.onerror = () => resolve(false);
+  });
+
+  if (!metaLoaded || video.videoWidth === 0 || video.videoHeight === 0) {
+    const msg = describeMediaError(video.error);
+    setStatus(`Failed to read video metadata. ${msg}`, true);
+    return;
+  }
+
+  const canPlayReady = await new Promise((resolve) => {
+    video.oncanplay = () => resolve(true);
+    video.onerror = () => resolve(false);
+  });
+
+  if (!canPlayReady) {
+    const msg = describeMediaError(video.error);
+    setStatus(`Video can't play in this browser. ${msg}`, true);
+    return;
+  }
+
+  try {
+    await video.play();
+  } catch (err) {
+    setStatus("Playback blocked by the browser. Click Play to start.", true);
+  }
+
+  const duration = Number.isFinite(video.duration) ? video.duration.toFixed(2) : "?";
+  setStatus(`Ready (${video.videoWidth}x${video.videoHeight}, ${duration}s)`, false);
+
+  // Enable playback controls
+  playBtn.disabled = false;
+  pauseBtn.disabled = false;
+  restartBtn.disabled = false;
+
+  // Setup button handlers
+  playBtn.onclick = () => {
+    if (video.paused) video.play();
+  };
+
+  pauseBtn.onclick = () => {
+    video.pause();
+  };
+
+  restartBtn.onclick = () => {
+    video.currentTime = 0;
+    video.play();
+  };
 
   // Output size fixed to reels
   canvas.width = 1080;
@@ -236,120 +562,28 @@ fileInput.onchange = async (e) => {
 
   // Main loop
   video.requestVideoFrameCallback(function tick(now) {
-    // 1) Draw video frame (also computes fit transform for landmark mapping)
-    drawFitted(video);
-
-    // 2) Pose detection
-    const results = pose.detectForVideo(video, now);
-    const poses = results.landmarks || [];
-
-    // Resize prevPoses list to match number of returned poses
-    while (prevPoses.length < poses.length) prevPoses.push(null);
-    if (prevPoses.length > poses.length) prevPoses = prevPoses.slice(0, poses.length);
-
-    // 3) Fade trail buffer
-    if (opts.trail.checked) {
-      const fade = parseFloat(opts.trailFade.value);
-      trailCtx.save();
-      trailCtx.globalCompositeOperation = "destination-in";
-      trailCtx.fillStyle = `rgba(0,0,0,${fade})`;
-      trailCtx.fillRect(0, 0, trailCanvas.width, trailCanvas.height);
-      trailCtx.restore();
-
-      trailCtx.globalAlpha = parseFloat(opts.trailDrawAlpha.value);
-    } else {
-      trailCtx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
-      trailCtx.globalAlpha = 1.0;
-    }
-
-    // 4) Draw each pose
-    for (let p = 0; p < poses.length; p++) {
-      const cur = poses[p];
-      const prev = prevPoses[p];
-      const smoothed = smoothLandmarks(cur, prev);
-      prevPoses[p] = smoothed;
-
-      // connections
-      for (const [a, b] of POSE_CONNECTIONS) {
-        const la = smoothed[a];
-        const lb = smoothed[b];
-        if (!isValid(la, a) || !isValid(lb, b)) continue;
-
-        const A = lmToCanvas(la);
-        const B = lmToCanvas(lb);
-
-        let color = "white";
-        if (opts.velocityColor.checked && prev) {
-          const pa = prev[a];
-          const pb = prev[b];
-          const Ap = lmToCanvas(pa);
-          const Bp = lmToCanvas(pb);
-          const v = Math.max(
-            Math.hypot(A.x - Ap.x, A.y - Ap.y),
-            Math.hypot(B.x - Bp.x, B.y - Bp.y)
-          );
-          color = velocityToColor(v);
-        }
-
-        trailCtx.strokeStyle = color;
-        trailCtx.lineWidth = 2;
-        trailCtx.beginPath();
-        trailCtx.moveTo(A.x, A.y);
-        trailCtx.lineTo(B.x, B.y);
-        trailCtx.stroke();
-      }
-
-      // face V-shape
-      for (const [a, b] of FACE_CONNECTIONS) {
-        const la = smoothed[a];
-        const lb = smoothed[b];
-        if (!isValid(la, a) || !isValid(lb, b)) continue;
-
-        const A = lmToCanvas(la);
-        const B = lmToCanvas(lb);
-
-        trailCtx.strokeStyle = "white";
-        trailCtx.lineWidth = 2;
-        trailCtx.beginPath();
-        trailCtx.moveTo(A.x, A.y);
-        trailCtx.lineTo(B.x, B.y);
-        trailCtx.stroke();
-      }
-
-      // joints + IDs
-      for (let i = 0; i < smoothed.length; i++) {
-        const lm = smoothed[i];
-        if (!isValid(lm, i)) continue;
-
-        const P = lmToCanvas(lm);
-
-        let color = "white";
-        if (opts.velocityColor.checked && prev) {
-          const pp = lmToCanvas(prev[i]);
-          const v = Math.hypot(P.x - pp.x, P.y - pp.y);
-          color = velocityToColor(v);
-        }
-
-        trailCtx.fillStyle = color;
-        trailCtx.beginPath();
-        trailCtx.arc(P.x, P.y, 3, 0, Math.PI * 2);
-        trailCtx.fill();
-
-        if (opts.drawIds.checked) {
-          ctx.fillStyle = color;
-          ctx.font = `${opts.idSize.value}px system-ui, sans-serif`;
-          ctx.fillText(String(i), P.x + 8, P.y - 8);
-        }
-      }
-    }
-
-    // 5) Composite trails
-    ctx.drawImage(trailCanvas, 0, 0);
-
-    // 6) Scanlines
-    if (opts.scanlines.checked) drawScanlines();
+    processFrame(video, now);
 
     // Next frame
     video.requestVideoFrameCallback(tick);
+  });
+
+  // Add listeners for controls to redraw when paused
+  const visualControls = [
+    opts.trail, opts.trailFade, opts.trailDrawAlpha, opts.smoothing,
+    opts.drawIds, opts.idSize, opts.velocityColor, opts.scanlines, opts.scanStrength
+  ];
+
+  visualControls.forEach(control => {
+    control.addEventListener('input', () => {
+      if (currentVideo && currentVideo.paused) {
+        redrawCurrentFrame();
+      }
+    });
+    control.addEventListener('change', () => {
+      if (currentVideo && currentVideo.paused) {
+        redrawCurrentFrame();
+      }
+    });
   });
 };
