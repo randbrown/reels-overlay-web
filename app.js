@@ -1,7 +1,6 @@
 import { PoseLandmarker, FilesetResolver } from 
 "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
-// Pose connection topology (same as MediaPipe)
 const POSE_CONNECTIONS = [
   [11,12],[11,13],[13,15],[12,14],[14,16],
   [11,23],[12,24],[23,24],
@@ -17,21 +16,24 @@ const fileInput = document.getElementById("fileInput");
 const opts = {
   trail: document.getElementById("trail"),
   trailAlpha: document.getElementById("trailAlpha"),
+  trailDecay: document.getElementById("trailDecay"),
   smoothing: document.getElementById("smoothing"),
   drawIds: document.getElementById("drawIds"),
+  idSize: document.getElementById("idSize"),
   velocityColor: document.getElementById("velocityColor"),
   scanlines: document.getElementById("scanlines"),
   scanStrength: document.getElementById("scanStrength"),
+  detConf: document.getElementById("detConf"),
+  trkConf: document.getElementById("trkConf"),
   codeOverlay: document.getElementById("codeOverlay")
 };
 
-let pose;
+let pose = null;
 
 let trailCanvas = document.createElement("canvas");
 let trailCtx = trailCanvas.getContext("2d");
 
-// ----- Initialize heavy pose model -----
-async function initPose() {
+async function createPose() {
   const vision = await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
   );
@@ -42,15 +44,18 @@ async function initPose() {
         "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task"
     },
     runningMode: "VIDEO",
-    minPoseDetectionConfidence: 0.5,
-    minTrackingConfidence: 0.5,
+    minPoseDetectionConfidence: parseFloat(opts.detConf.value),
+    minTrackingConfidence: parseFloat(opts.trkConf.value),
     minPosePresenceConfidence: 0.5
   });
 }
 
-await initPose();
+// recreate model when sliders change
+opts.detConf.oninput = () => createPose();
+opts.trkConf.oninput = () => createPose();
 
-// Aspect ratio fitting (like fit_to_reels)
+await createPose();
+
 function drawFitted(video) {
   const w = canvas.width;
   const h = canvas.height;
@@ -75,12 +80,8 @@ function drawFitted(video) {
   ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
 }
 
-fileInput.onchange = e => {
-  const file = e.target.files[0];
-  startProcessing(file);
-};
+fileInput.onchange = e => startProcessing(e.target.files[0]);
 
-// Temporal smoothing using slider
 function smoothLandmarks(current, prev) {
   if (!prev) return current;
 
@@ -97,7 +98,6 @@ function isValid(lm) {
   return lm.visibility !== undefined && lm.visibility > 0.5;
 }
 
-// Stabilized velocity coloring
 function velocityToColor(v) {
   let t = Math.max(0, Math.min(1, v / 200));
 
@@ -120,9 +120,7 @@ async function startProcessing(file) {
 
   video.src = URL.createObjectURL(file);
 
-  await new Promise(resolve => {
-    video.onloadeddata = resolve;
-  });
+  await new Promise(resolve => video.onloadeddata = resolve);
 
   await video.play();
 
@@ -158,14 +156,16 @@ function drawOverlays(landmarks, prev) {
   const w = canvas.width;
   const h = canvas.height;
 
+  // ---- LESS STICKY TRAILS ----
   if (opts.trail.checked) {
-    trailCtx.globalAlpha = parseFloat(opts.trailAlpha.value);
+    trailCtx.globalAlpha = parseFloat(opts.trailDecay.value);
     trailCtx.drawImage(trailCanvas, 0, 0);
+
+    trailCtx.globalAlpha = parseFloat(opts.trailAlpha.value);
   } else {
     trailCtx.clearRect(0, 0, w, h);
   }
 
-  // draw skeleton lines
   for (const [a, b] of POSE_CONNECTIONS) {
 
     const pa = landmarks[a];
@@ -198,7 +198,6 @@ function drawOverlays(landmarks, prev) {
     trailCtx.stroke();
   }
 
-  // draw joints
   for (let i = 0; i < landmarks.length; i++) {
 
     const lm = landmarks[i];
@@ -226,8 +225,8 @@ function drawOverlays(landmarks, prev) {
 
     if (opts.drawIds.checked) {
       ctx.fillStyle = color;
-      ctx.font = "12px sans-serif";
-      ctx.fillText(i, x + 4, y - 4);
+      ctx.font = `${opts.idSize.value}px sans-serif`;
+      ctx.fillText(i, x + 6, y - 6);
     }
   }
 
