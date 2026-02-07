@@ -11,34 +11,56 @@
 
   <input type="file" id="fileInput" accept="video/*" />
 
-  <div class="controls">
+  
+    
+    <div class="controls">
 
-    <label><input type="checkbox" id="trail" checked> Trails</label>
+  <label><input type="checkbox" id="trail" checked> Trails</label>
 
-    <label>
-      Trail Alpha
-      <input type="range" id="trailAlpha" min="0.5" max="0.98" step="0.01" value="0.85">
-    </label>
+  <label>
+    Trail Alpha
+    <input type="range" id="trailAlpha" min="0.4" max="0.95" step="0.01" value="0.75">
+  </label>
 
-    <label>
-      Smoothing
-      <input type="range" id="smoothing" min="0.5" max="0.95" step="0.01" value="0.75">
-    </label>
+  <label>
+    Trail Decay
+    <input type="range" id="trailDecay" min="0.80" max="1.0" step="0.01" value="0.94">
+  </label>
 
-    <label><input type="checkbox" id="drawIds" checked> Draw IDs</label>
+  <label>
+    Smoothing
+    <input type="range" id="smoothing" min="0.5" max="0.95" step="0.01" value="0.78">
+  </label>
 
-    <label><input type="checkbox" id="velocityColor" checked> Velocity Color</label>
+  <label><input type="checkbox" id="drawIds" checked> Draw IDs</label>
 
-    <label><input type="checkbox" id="scanlines" checked> Scanlines</label>
+  <label>
+    ID Size
+    <input type="range" id="idSize" min="10" max="32" step="1" value="18">
+  </label>
 
-    <label>
-      Scanline Strength
-      <input type="range" id="scanStrength" min="0.02" max="0.25" step="0.01" value="0.12">
-    </label>
+  <label><input type="checkbox" id="velocityColor" checked> Velocity Color</label>
 
-    <label><input type="checkbox" id="codeOverlay" checked> Code Overlay</label>
+  <label><input type="checkbox" id="scanlines" checked> Scanlines</label>
 
-  </div>
+  <label>
+    Scanline Strength
+    <input type="range" id="scanStrength" min="0.02" max="0.25" step="0.01" value="0.12">
+  </label>
+
+  <label>
+    Detection Confidence
+    <input type="range" id="detConf" min="0.2" max="0.9" step="0.05" value="0.5">
+  </label>
+
+  <label>
+    Tracking Confidence
+    <input type="range" id="trkConf" min="0.2" max="0.9" step="0.05" value="0.5">
+  </label>
+
+  <label><input type="checkbox" id="codeOverlay" checked> Code Overlay</label>
+
+</div>
 
   <canvas id="view"></canvas>
 
