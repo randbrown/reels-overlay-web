@@ -23,16 +23,24 @@ const statusEl = document.getElementById("status");
 const playBtn = document.getElementById("playBtn");
 const pauseBtn = document.getElementById("pauseBtn");
 const restartBtn = document.getElementById("restartBtn");
+const exportBtn = document.getElementById("exportBtn");
 
 // Disable playback controls until a video is loaded
 playBtn.disabled = true;
 pauseBtn.disabled = true;
 restartBtn.disabled = true;
+if (exportBtn) exportBtn.disabled = true;
 
 function setStatus(message, isError = false) {
   if (!statusEl) return;
   statusEl.textContent = message;
   statusEl.classList.toggle("error", isError);
+}
+
+if (exportBtn) {
+  exportBtn.addEventListener("click", () => {
+    exportWithOverlay();
+  });
 }
 
 function describeMediaError(error) {
@@ -49,6 +57,100 @@ function describeMediaError(error) {
     default:
       return "Unknown media error.";
   }
+}
+
+function pickRecorderMimeType() {
+  const preferred = [
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm",
+  ];
+  for (const type of preferred) {
+    if (MediaRecorder.isTypeSupported(type)) return type;
+  }
+  return "";
+}
+
+function getAudioTrackFromVideo(video) {
+  try {
+    const stream = video.captureStream();
+    const tracks = stream.getAudioTracks();
+    return tracks.length ? tracks[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+async function exportWithOverlay() {
+  if (!currentVideo || exportInProgress) return;
+  exportInProgress = true;
+  if (exportBtn) exportBtn.disabled = true;
+
+  const baseName = currentFile?.name?.replace(/\.[^/.]+$/, "") || "overlay";
+  setStatus("Exporting…", false);
+
+  const prevMuted = currentVideo.muted;
+  const prevVolume = currentVideo.volume;
+  currentVideo.muted = false;
+  currentVideo.volume = 0;
+
+  currentVideo.currentTime = 0;
+
+  try {
+    await currentVideo.play();
+  } catch (err) {
+    setStatus("Playback blocked by the browser. Click Play once, then Export.", true);
+    currentVideo.muted = prevMuted;
+    currentVideo.volume = prevVolume;
+    exportInProgress = false;
+    if (exportBtn) exportBtn.disabled = false;
+    return;
+  }
+
+  const canvasStream = canvas.captureStream(30);
+  const audioTrack = getAudioTrackFromVideo(currentVideo);
+  const tracks = [...canvasStream.getVideoTracks()];
+  if (audioTrack) tracks.push(audioTrack);
+  const combinedStream = new MediaStream(tracks);
+
+  recordingChunks = [];
+  const mimeType = pickRecorderMimeType();
+  recorder = new MediaRecorder(combinedStream, mimeType ? { mimeType } : undefined);
+
+  recorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) recordingChunks.push(e.data);
+  };
+
+  recorder.onerror = () => {
+    setStatus("Export failed during recording.", true);
+  };
+
+  recorder.onstop = () => {
+    const finalType = recorder.mimeType || "video/webm";
+    const blob = new Blob(recordingChunks, { type: finalType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const ext = finalType.includes("mp4") ? "mp4" : "webm";
+    a.href = url;
+    a.download = `${baseName}-overlay.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    currentVideo.muted = prevMuted;
+    currentVideo.volume = prevVolume;
+
+    exportInProgress = false;
+    if (exportBtn) exportBtn.disabled = false;
+    setStatus("Export complete", false);
+  };
+
+  recorder.start(200);
+
+  currentVideo.addEventListener("ended", () => {
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+  }, { once: true });
 }
 
 const opts = {
@@ -237,6 +339,10 @@ function drawScanlines() {
 let currentVideo = null;
 let lastDetectedPoses = null;
 let lastTimestamp = null;
+let currentFile = null;
+let recorder = null;
+let recordingChunks = [];
+let exportInProgress = false;
 
 // Function to process and draw a single frame
 function processFrame(video, timestamp) {
@@ -475,6 +581,9 @@ fileInput.onchange = async (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
 
+  currentFile = file;
+  if (exportBtn) exportBtn.disabled = true;
+
   setStatus(`Loading: ${file.name} (${Math.round(file.size / 1024 / 1024)} MB)`);
 
   // Create a fresh video element each time
@@ -533,6 +642,7 @@ fileInput.onchange = async (e) => {
   playBtn.disabled = false;
   pauseBtn.disabled = false;
   restartBtn.disabled = false;
+  if (exportBtn) exportBtn.disabled = false;
 
   // Setup button handlers
   playBtn.onclick = () => {
