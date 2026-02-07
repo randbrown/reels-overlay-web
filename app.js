@@ -1,11 +1,18 @@
 import { PoseLandmarker, FilesetResolver } from
 "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
+// Core body connections
 const POSE_CONNECTIONS = [
   [11,12],[11,13],[13,15],[12,14],[14,16],
   [11,23],[12,24],[23,24],
   [23,25],[25,27],[27,29],[29,31],
   [24,26],[26,28],[28,30],[30,32]
+];
+
+// Classic face V-shape like old Python drawing utils
+const FACE_CONNECTIONS = [
+  [0, 1], // nose → left eye
+  [0, 2]  // nose → right eye
 ];
 
 const canvas = document.getElementById("view");
@@ -15,8 +22,8 @@ const fileInput = document.getElementById("fileInput");
 
 const opts = {
   trail: document.getElementById("trail"),
-  trailFade: document.getElementById("trailFade"),           // fades existing trail buffer
-  trailDrawAlpha: document.getElementById("trailDrawAlpha"), // opacity for newly drawn lines/joints
+  trailFade: document.getElementById("trailFade"),
+  trailDrawAlpha: document.getElementById("trailDrawAlpha"),
   smoothing: document.getElementById("smoothing"),
   drawIds: document.getElementById("drawIds"),
   idSize: document.getElementById("idSize"),
@@ -32,11 +39,11 @@ const opts = {
 let vision = null;
 let pose = null;
 
-// Single shared trail buffer (we draw all people into it)
+// Trail buffer
 const trailCanvas = document.createElement("canvas");
 const trailCtx = trailCanvas.getContext("2d");
 
-// For smoothing + velocity we keep previous landmarks per pose index
+// Keep previous landmarks for smoothing + velocity
 let prevPoses = [];
 
 async function initVision() {
@@ -54,29 +61,33 @@ async function createPose() {
         "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task"
     },
     runningMode: "VIDEO",
+
     numPoses: parseInt(opts.numPoses.value, 10),
+
     minPoseDetectionConfidence: parseFloat(opts.detConf.value),
     minTrackingConfidence: parseFloat(opts.trkConf.value),
-    minPosePresenceConfidence: 0.5
+
+    // Important for better legs/feet
+    enablePoseWorldLandmarks: true
   });
 
-  // Reset previous poses whenever we rebuild the model
   prevPoses = [];
 }
 
-// Rebuild when these sliders change (debounced a bit)
+// Rebuild pose model when relevant sliders change
 let rebuildTimer = null;
 function requestRebuild() {
   clearTimeout(rebuildTimer);
   rebuildTimer = setTimeout(() => createPose(), 250);
 }
+
 opts.detConf.addEventListener("input", requestRebuild);
 opts.trkConf.addEventListener("input", requestRebuild);
 opts.numPoses.addEventListener("input", requestRebuild);
 
 await createPose();
 
-// --- aspect ratio fit (like fit_to_reels) ---
+// Fit video to 9:16 canvas
 function drawFitted(video) {
   const w = canvas.width;
   const h = canvas.height;
@@ -101,23 +112,42 @@ function drawFitted(video) {
   ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
 }
 
+fileInput.onchange = e => startProcessing(e.target.files[0]);
+
+// Smart visibility rules – lenient for feet
+function isValid(lm, index) {
+  if (lm.visibility === undefined) return false;
+
+  const FOOT_POINTS = [25,26,27,28,29,30,31,32];
+  const threshold = FOOT_POINTS.includes(index) ? 0.2 : 0.5;
+
+  return lm.visibility > threshold;
+}
+
+// Smoothing with extra stability for legs/feet
 function smoothLandmarks(current, prev) {
   if (!prev) return current;
-  const a = parseFloat(opts.smoothing.value);
-  return current.map((lm, i) => ({
-    x: a * prev[i].x + (1 - a) * lm.x,
-    y: a * prev[i].y + (1 - a) * lm.y,
-    visibility: lm.visibility
-  }));
+
+  const base = parseFloat(opts.smoothing.value);
+
+  return current.map((lm, i) => {
+    const EXTRA = [25,26,27,28,29,30,31,32];
+    const alpha = EXTRA.includes(i)
+      ? Math.min(0.92, base + 0.1)
+      : base;
+
+    return {
+      x: alpha * prev[i].x + (1 - alpha) * lm.x,
+      y: alpha * prev[i].y + (1 - alpha) * lm.y,
+      visibility: lm.visibility
+    };
+  });
 }
 
-function isValid(lm) {
-  return lm.visibility !== undefined && lm.visibility > 0.5;
-}
-
+// Velocity → color ramp
 function velocityToColor(v) {
-  // Clamp and map to a "blue->green->red" ramp like your Python version
   let t = Math.max(0, Math.min(1, v / 200));
+
   if (t < 0.5) {
     const a = t / 0.5;
     return `rgb(${255*(1-a)}, ${255*a}, 0)`;
@@ -127,8 +157,6 @@ function velocityToColor(v) {
   }
 }
 
-fileInput.onchange = e => startProcessing(e.target.files[0]);
-
 async function startProcessing(file) {
   const video = document.createElement("video");
   video.playsInline = true;
@@ -136,15 +164,16 @@ async function startProcessing(file) {
   video.autoplay = true;
 
   video.src = URL.createObjectURL(file);
+
   await new Promise(resolve => video.onloadeddata = resolve);
   await video.play();
 
   canvas.width = 1080;
   canvas.height = 1920;
+
   trailCanvas.width = 1080;
   trailCanvas.height = 1920;
 
-  // Clear buffers when starting a new video
   trailCtx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
   prevPoses = [];
 
@@ -165,30 +194,27 @@ function drawOverlays(posesNow) {
   const w = canvas.width;
   const h = canvas.height;
 
-  // ---- TRAIL BUFFER FADE (this is the key fix) ----
+  // ---- Proper trail fade (key fix) ----
   if (opts.trail.checked) {
-    const fade = parseFloat(opts.trailFade.value); // 0.75..0.995
+    const fade = parseFloat(opts.trailFade.value);
 
-    // Multiply existing trail alpha by "fade" each frame:
     trailCtx.save();
     trailCtx.globalCompositeOperation = "destination-in";
     trailCtx.fillStyle = `rgba(0,0,0,${fade})`;
     trailCtx.fillRect(0, 0, w, h);
     trailCtx.restore();
 
-    // New strokes opacity:
     trailCtx.globalAlpha = parseFloat(opts.trailDrawAlpha.value);
   } else {
     trailCtx.clearRect(0, 0, w, h);
     trailCtx.globalAlpha = 1.0;
   }
 
-  // Ensure prevPoses array matches num poses
   const n = posesNow.length;
+
   while (prevPoses.length < n) prevPoses.push(null);
   if (prevPoses.length > n) prevPoses = prevPoses.slice(0, n);
 
-  // Draw each pose into the trail buffer
   for (let p = 0; p < n; p++) {
     const cur = posesNow[p];
     const prev = prevPoses[p];
@@ -196,15 +222,18 @@ function drawOverlays(posesNow) {
     const smoothed = smoothLandmarks(cur, prev);
     prevPoses[p] = smoothed;
 
-    // connections
+    // Body skeleton
     for (const [a, b] of POSE_CONNECTIONS) {
-      const pa = smoothed[a], pb = smoothed[b];
-      if (!isValid(pa) || !isValid(pb)) continue;
+      const pa = smoothed[a];
+      const pb = smoothed[b];
+
+      if (!isValid(pa, a) || !isValid(pb, b)) continue;
 
       const x1 = pa.x * w, y1 = pa.y * h;
       const x2 = pb.x * w, y2 = pb.y * h;
 
       let color = "white";
+
       if (opts.velocityColor.checked && prev) {
         let v = Math.hypot(
           x1 - prev[a].x * w,
@@ -223,14 +252,35 @@ function drawOverlays(posesNow) {
       trailCtx.stroke();
     }
 
-    // joints + IDs
+    // Face V-shape
+    for (const [a, b] of FACE_CONNECTIONS) {
+      const pa = smoothed[a];
+      const pb = smoothed[b];
+
+      if (!isValid(pa, a) || !isValid(pb, b)) continue;
+
+      const x1 = pa.x * w, y1 = pa.y * h;
+      const x2 = pb.x * w, y2 = pb.y * h;
+
+      trailCtx.strokeStyle = "white";
+      trailCtx.lineWidth = 2;
+
+      trailCtx.beginPath();
+      trailCtx.moveTo(x1, y1);
+      trailCtx.lineTo(x2, y2);
+      trailCtx.stroke();
+    }
+
+    // Joints + IDs
     for (let i = 0; i < smoothed.length; i++) {
       const lm = smoothed[i];
-      if (!isValid(lm)) continue;
+      if (!isValid(lm, i)) continue;
 
-      const x = lm.x * w, y = lm.y * h;
+      const x = lm.x * w;
+      const y = lm.y * h;
 
       let color = "white";
+
       if (opts.velocityColor.checked && prev) {
         let v = Math.hypot(
           x - prev[i].x * w,
@@ -253,7 +303,6 @@ function drawOverlays(posesNow) {
     }
   }
 
-  // Composite trail buffer onto main frame
   ctx.drawImage(trailCanvas, 0, 0);
 
   if (opts.scanlines.checked) drawScanlines();
@@ -261,9 +310,9 @@ function drawOverlays(posesNow) {
 
 function drawScanlines() {
   const strength = parseFloat(opts.scanStrength.value);
+
   ctx.fillStyle = `rgba(0,0,0,${strength})`;
 
-  // thicker CRT-ish scanlines
   for (let y = 0; y < canvas.height; y += 4) {
     ctx.fillRect(0, y, canvas.width, 2);
   }
