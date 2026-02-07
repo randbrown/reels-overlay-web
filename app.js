@@ -1,6 +1,9 @@
 import { PoseLandmarker, FilesetResolver } from 
 "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
+import { POSE_CONNECTIONS } from 
+"https://cdn.jsdelivr.net/npm/@mediapipe/pose";
+
 const canvas = document.getElementById("view");
 const ctx = canvas.getContext("2d");
 
@@ -16,6 +19,7 @@ const opts = {
 };
 
 let pose;
+
 let trailCanvas = document.createElement("canvas");
 let trailCtx = trailCanvas.getContext("2d");
 
@@ -40,6 +44,31 @@ fileInput.onchange = e => {
   startProcessing(file);
 };
 
+// ---- aspect-ratio fitting equivalent to your fit_to_reels ----
+function drawFitted(video) {
+  const w = canvas.width;
+  const h = canvas.height;
+
+  const targetAspect = w / h;
+  const srcAspect = video.videoWidth / video.videoHeight;
+
+  let sx, sy, sw, sh;
+
+  if (srcAspect > targetAspect) {
+    sw = video.videoHeight * targetAspect;
+    sh = video.videoHeight;
+    sx = (video.videoWidth - sw) / 2;
+    sy = 0;
+  } else {
+    sw = video.videoWidth;
+    sh = video.videoWidth / targetAspect;
+    sx = 0;
+    sy = (video.videoHeight - sh) / 2;
+  }
+
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
+}
+
 async function startProcessing(file) {
   const video = document.createElement("video");
   video.src = URL.createObjectURL(file);
@@ -55,7 +84,7 @@ async function startProcessing(file) {
 
   video.requestVideoFrameCallback(function process(now) {
 
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    drawFitted(video);
 
     const results = pose.detectForVideo(video, now);
 
@@ -68,19 +97,76 @@ async function startProcessing(file) {
   });
 }
 
+// ---- velocity coloring exactly like your python version ----
+function velocityToColor(v) {
+  const vMin = 0;
+  const vMax = 200;
+
+  let t = (v - vMin) / (vMax - vMin);
+  t = Math.max(0, Math.min(1, t));
+
+  if (t < 0.5) {
+    const a = t / 0.5;
+    return `rgb(${255*(1-a)}, ${255*a}, 0)`;
+  } else {
+    const a = (t - 0.5) / 0.5;
+    return `rgb(0, ${255*(1-a)}, ${255*a})`;
+  }
+}
+
+// ---- main renderer matching python logic ----
 function drawOverlays(landmarks, prev) {
 
   const w = canvas.width;
   const h = canvas.height;
 
+  // fade trails like your numpy buffer
   if (opts.trail.checked) {
-    trailCtx.globalAlpha = opts.trailAlpha.value;
+    trailCtx.globalAlpha = parseFloat(opts.trailAlpha.value);
     trailCtx.drawImage(trailCanvas, 0, 0);
   } else {
     trailCtx.clearRect(0, 0, w, h);
   }
 
+  // ---- draw skeleton connections ----
+  for (const [a, b] of POSE_CONNECTIONS) {
+
+    const pa = landmarks[a];
+    const pb = landmarks[b];
+
+    const x1 = pa.x * w;
+    const y1 = pa.y * h;
+    const x2 = pb.x * w;
+    const y2 = pb.y * h;
+
+    let color = "white";
+
+    if (opts.velocityColor.checked && prev) {
+      const v1 = Math.hypot(
+        x1 - prev[a].x * w,
+        y1 - prev[a].y * h
+      );
+
+      const v2 = Math.hypot(
+        x2 - prev[b].x * w,
+        y2 - prev[b].y * h
+      );
+
+      color = velocityToColor(Math.max(v1, v2));
+    }
+
+    trailCtx.strokeStyle = color;
+    trailCtx.lineWidth = 2;
+
+    trailCtx.beginPath();
+    trailCtx.moveTo(x1, y1);
+    trailCtx.lineTo(x2, y2);
+    trailCtx.stroke();
+  }
+
+  // ---- draw joints ----
   for (let i = 0; i < landmarks.length; i++) {
+
     const lm = landmarks[i];
 
     const x = lm.x * w;
@@ -97,36 +183,30 @@ function drawOverlays(landmarks, prev) {
       color = velocityToColor(v);
     }
 
+    // draw joint dot
     trailCtx.fillStyle = color;
     trailCtx.beginPath();
     trailCtx.arc(x, y, 3, 0, Math.PI * 2);
     trailCtx.fill();
 
+    // optional IDs
     if (opts.drawIds.checked) {
       ctx.fillStyle = color;
-      ctx.fillText(i, x + 5, y - 5);
+      ctx.font = "12px sans-serif";
+      ctx.fillText(i, x + 4, y - 4);
     }
   }
 
+  // composite trail buffer onto main canvas
   ctx.drawImage(trailCanvas, 0, 0);
 
+  // scanlines like your apply_scanlines
   if (opts.scanlines.checked) {
     drawScanlines();
   }
 }
 
-function velocityToColor(v) {
-  const t = Math.min(1, v / 200);
-
-  if (t < 0.5) {
-    const a = t / 0.5;
-    return `rgb(${255*(1-a)}, ${255*a}, 0)`;
-  } else {
-    const a = (t - 0.5) / 0.5;
-    return `rgb(0, ${255*(1-a)}, ${255*a})`;
-  }
-}
-
+// ---- same scanlines concept as python ----
 function drawScanlines() {
   ctx.fillStyle = "rgba(0,0,0,0.06)";
   for (let y = 0; y < canvas.height; y += 2) {
