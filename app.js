@@ -1,54 +1,49 @@
-import { PoseLandmarker, FilesetResolver } from
-"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+import {
+  PoseLandmarker,
+  FilesetResolver
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
 
-// Core body connections
-const POSE_CONNECTIONS = [
-  [11,12],[11,13],[13,15],[12,14],[14,16],
-  [11,23],[12,24],[23,24],
-  [23,25],[25,27],[27,29],[29,31],
-  [24,26],[26,28],[28,30],[30,32]
-];
+let pose = null;
+let vision = null;
 
-// Classic face V-shape like old Python drawing utils
-const FACE_CONNECTIONS = [
-  [0, 1], // nose → left eye
-  [0, 2]  // nose → right eye
-];
-
-const canvas = document.getElementById("view");
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
-const fileInput = document.getElementById("fileInput");
-
-const opts = {
-  trail: document.getElementById("trail"),
-  trailFade: document.getElementById("trailFade"),
-  trailDrawAlpha: document.getElementById("trailDrawAlpha"),
-  smoothing: document.getElementById("smoothing"),
-  drawIds: document.getElementById("drawIds"),
-  idSize: document.getElementById("idSize"),
-  velocityColor: document.getElementById("velocityColor"),
-  scanlines: document.getElementById("scanlines"),
-  scanStrength: document.getElementById("scanStrength"),
-  detConf: document.getElementById("detConf"),
-  trkConf: document.getElementById("trkConf"),
-  numPoses: document.getElementById("numPoses"),
-  codeOverlay: document.getElementById("codeOverlay")
-};
-
-let vision = null;
-let pose = null;
-
-// Trail buffer
 const trailCanvas = document.createElement("canvas");
 const trailCtx = trailCanvas.getContext("2d");
 
-// Keep previous landmarks for smoothing + velocity
 let prevPoses = [];
+
+const opts = {
+  trails: document.getElementById("trails"),
+  trailAlpha: document.getElementById("trailAlpha"),
+  drawIds: document.getElementById("drawIds"),
+  velocityColor: document.getElementById("velocityColor"),
+  scanlines: document.getElementById("scanlines"),
+  scanStrength: document.getElementById("scanStrength"),
+  codeOverlay: document.getElementById("codeOverlay"),
+  detConf: document.getElementById("detConf"),
+  trkConf: document.getElementById("trkConf"),
+  numPoses: document.getElementById("numPoses"),
+  smoothing: document.getElementById("smoothing")
+};
+
+const POSE_CONNECTIONS = [
+  [11,12],[11,13],[13,15],[12,14],[14,16],
+  [11,23],[12,24],[23,24],
+  [23,25],[25,27],[24,26],[26,28],
+  [27,29],[29,31],[28,30],[30,32]
+];
+
+const FACE_CONNECTIONS = [
+  [0,1],
+  [0,2]
+];
 
 async function initVision() {
   vision = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
   );
 }
 
@@ -67,28 +62,50 @@ async function createPose() {
     minPoseDetectionConfidence: parseFloat(opts.detConf.value),
     minTrackingConfidence: parseFloat(opts.trkConf.value),
 
-    // Important for better legs/feet
     enablePoseWorldLandmarks: true
   });
 
   prevPoses = [];
 }
 
-// Rebuild pose model when relevant sliders change
-let rebuildTimer = null;
-function requestRebuild() {
-  clearTimeout(rebuildTimer);
-  rebuildTimer = setTimeout(() => createPose(), 250);
+function velocityToColor(v) {
+  const max = 800;
+  let t = Math.min(1, Math.max(0, v / max));
+
+  if (t < 0.5) {
+    const a = t / 0.5;
+    return `rgb(${255 * (1 - a)},${255 * a},0)`;
+  } else {
+    const a = (t - 0.5) / 0.5;
+    return `rgb(0,${255 * (1 - a)},${255 * a})`;
+  }
 }
 
-opts.detConf.addEventListener("input", requestRebuild);
-opts.trkConf.addEventListener("input", requestRebuild);
-opts.numPoses.addEventListener("input", requestRebuild);
+function drawFitted(src, dstCtx) {
+  const w = dstCtx.canvas.width;
+  const h = dstCtx.canvas.height;
 
-await createPose();
+  const targetAspect = w / h;
+  const srcAspect = src.videoWidth / src.videoHeight;
 
-// Fit video to 9:16 canvas
-function drawFitted(video) {
+  let sx, sy, sw, sh;
+
+  if (srcAspect > targetAspect) {
+    sw = src.videoHeight * targetAspect;
+    sh = src.videoHeight;
+    sx = (src.videoWidth - sw) / 2;
+    sy = 0;
+  } else {
+    sw = src.videoWidth;
+    sh = src.videoWidth / targetAspect;
+    sx = 0;
+    sy = (src.videoHeight - sh) / 2;
+  }
+
+  dstCtx.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
+}
+
+function transformPoint(lm, video) {
   const w = canvas.width;
   const h = canvas.height;
 
@@ -109,31 +126,48 @@ function drawFitted(video) {
     sy = (video.videoHeight - sh) / 2;
   }
 
-  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
+  const px = lm.x * video.videoWidth;
+  const py = lm.y * video.videoHeight;
+
+  const nx = (px - sx) / sw;
+  const ny = (py - sy) / sh;
+
+  return {
+    x: nx * w,
+    y: ny * h
+  };
 }
 
-fileInput.onchange = e => startProcessing(e.target.files[0]);
-
-// Smart visibility rules – lenient for feet
 function isValid(lm, index) {
   if (lm.visibility === undefined) return false;
 
   const FOOT_POINTS = [25,26,27,28,29,30,31,32];
-  const threshold = FOOT_POINTS.includes(index) ? 0.2 : 0.5;
 
-  return lm.visibility > threshold;
+  if (FOOT_POINTS.includes(index)) {
+    return lm.visibility > 0.05;
+  }
+
+  return lm.visibility > 0.4;
 }
 
-// Smoothing with extra stability for legs/feet
 function smoothLandmarks(current, prev) {
   if (!prev) return current;
 
   const base = parseFloat(opts.smoothing.value);
 
   return current.map((lm, i) => {
+
+    if (!isValid(lm, i)) {
+      return {
+        x: prev[i].x,
+        y: prev[i].y,
+        visibility: prev[i].visibility * 0.95
+      };
+    }
+
     const EXTRA = [25,26,27,28,29,30,31,32];
     const alpha = EXTRA.includes(i)
-      ? Math.min(0.92, base + 0.1)
+      ? Math.min(0.96, base + 0.15)
       : base;
 
     return {
@@ -144,123 +178,89 @@ function smoothLandmarks(current, prev) {
   });
 }
 
-// Velocity → color ramp
-function velocityToColor(v) {
-  let t = Math.max(0, Math.min(1, v / 200));
+function applyScanlines() {
+  const strength = parseFloat(opts.scanStrength.value);
 
-  if (t < 0.5) {
-    const a = t / 0.5;
-    return `rgb(${255*(1-a)}, ${255*a}, 0)`;
-  } else {
-    const a = (t - 0.5) / 0.5;
-    return `rgb(0, ${255*(1-a)}, ${255*a})`;
-  }
-}
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = img.data;
 
-async function startProcessing(file) {
-  const video = document.createElement("video");
-  video.playsInline = true;
-  video.muted = true;
-  video.autoplay = true;
-
-  video.src = URL.createObjectURL(file);
-
-  await new Promise(resolve => video.onloadeddata = resolve);
-  await video.play();
-
-  canvas.width = 1080;
-  canvas.height = 1920;
-
-  trailCanvas.width = 1080;
-  trailCanvas.height = 1920;
-
-  trailCtx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
-  prevPoses = [];
-
-  video.requestVideoFrameCallback(function process(now) {
-    drawFitted(video);
-
-    const results = pose.detectForVideo(video, now);
-
-    if (results.landmarks && results.landmarks.length > 0) {
-      drawOverlays(results.landmarks);
+  for (let y = 0; y < canvas.height; y += 2) {
+    for (let x = 0; x < canvas.width; x++) {
+      const i = (y * canvas.width + x) * 4;
+      data[i] *= (1 - strength);
+      data[i+1] *= (1 - strength);
+      data[i+2] *= (1 - strength);
     }
+  }
 
-    video.requestVideoFrameCallback(process);
-  });
+  ctx.putImageData(img, 0, 0);
 }
 
-function drawOverlays(posesNow) {
+function drawLandmarkId(x, y, id) {
+  ctx.font = "18px monospace";
+  ctx.fillStyle = "rgba(255,255,255,0.9)";
+  ctx.fillText(id.toString(), x + 5, y - 5);
+}
+
+function drawOverlays(poses) {
   const w = canvas.width;
   const h = canvas.height;
 
-  // ---- Proper trail fade (key fix) ----
-  if (opts.trail.checked) {
-    const fade = parseFloat(opts.trailFade.value);
-
-    trailCtx.save();
-    trailCtx.globalCompositeOperation = "destination-in";
-    trailCtx.fillStyle = `rgba(0,0,0,${fade})`;
-    trailCtx.fillRect(0, 0, w, h);
-    trailCtx.restore();
-
-    trailCtx.globalAlpha = parseFloat(opts.trailDrawAlpha.value);
+  if (opts.trails.checked) {
+    trailCtx.globalAlpha = parseFloat(opts.trailAlpha.value);
+    trailCtx.drawImage(trailCanvas, 0, 0);
   } else {
     trailCtx.clearRect(0, 0, w, h);
-    trailCtx.globalAlpha = 1.0;
   }
 
-  const n = posesNow.length;
+  poses.forEach((poseData, pi) => {
+    const raw = poseData.landmarks[0];
 
-  while (prevPoses.length < n) prevPoses.push(null);
-  if (prevPoses.length > n) prevPoses = prevPoses.slice(0, n);
+    if (!raw) return;
 
-  for (let p = 0; p < n; p++) {
-    const cur = posesNow[p];
-    const prev = prevPoses[p];
+    const smoothed = smoothLandmarks(
+      raw,
+      prevPoses[pi]
+    );
 
-    const smoothed = smoothLandmarks(cur, prev);
-    prevPoses[p] = smoothed;
+    prevPoses[pi] = smoothed;
 
-    // Body skeleton
-    for (const [a, b] of POSE_CONNECTIONS) {
+    const drawCtx = opts.trails.checked ? trailCtx : ctx;
+
+    POSE_CONNECTIONS.forEach(([a, b]) => {
       const pa = smoothed[a];
       const pb = smoothed[b];
 
-      if (!isValid(pa, a) || !isValid(pb, b)) continue;
+      if (!isValid(pa, a) || !isValid(pb, b)) return;
 
-      const x1 = pa.x * w, y1 = pa.y * h;
-      const x2 = pb.x * w, y2 = pb.y * h;
+      const { x: x1, y: y1 } = transformPoint(pa, video);
+      const { x: x2, y: y2 } = transformPoint(pb, video);
 
-      let color = "white";
+      const vel = Math.hypot(
+        pa.x - pb.x,
+        pa.y - pb.y
+      ) * 1000;
 
-      if (opts.velocityColor.checked && prev) {
-        let v = Math.hypot(
-          x1 - prev[a].x * w,
-          y1 - prev[a].y * h
-        );
-        v = Math.min(200, v * 0.7);
-        color = velocityToColor(v);
-      }
+      drawCtx.strokeStyle = opts.velocityColor.checked
+        ? velocityToColor(vel)
+        : "red";
 
-      trailCtx.strokeStyle = color;
-      trailCtx.lineWidth = 2;
+      drawCtx.lineWidth = 2;
 
-      trailCtx.beginPath();
-      trailCtx.moveTo(x1, y1);
-      trailCtx.lineTo(x2, y2);
-      trailCtx.stroke();
-    }
+      drawCtx.beginPath();
+      drawCtx.moveTo(x1, y1);
+      drawCtx.lineTo(x2, y2);
+      drawCtx.stroke();
+    });
 
-    // Face V-shape
-    for (const [a, b] of FACE_CONNECTIONS) {
+    FACE_CONNECTIONS.forEach(([a, b]) => {
       const pa = smoothed[a];
       const pb = smoothed[b];
 
-      if (!isValid(pa, a) || !isValid(pb, b)) continue;
+      if (!isValid(pa, a) || !isValid(pb, b)) return;
 
-      const x1 = pa.x * w, y1 = pa.y * h;
-      const x2 = pb.x * w, y2 = pb.y * h;
+      const { x: x1, y: y1 } = transformPoint(pa, video);
+      const { x: x2, y: y2 } = transformPoint(pb, video);
 
       trailCtx.strokeStyle = "white";
       trailCtx.lineWidth = 2;
@@ -269,51 +269,65 @@ function drawOverlays(posesNow) {
       trailCtx.moveTo(x1, y1);
       trailCtx.lineTo(x2, y2);
       trailCtx.stroke();
+    });
+
+    if (opts.drawIds.checked) {
+      smoothed.forEach((lm, i) => {
+        if (!isValid(lm, i)) return;
+
+        const { x, y } = transformPoint(lm, video);
+        drawLandmarkId(x, y, i);
+      });
     }
+  });
 
-    // Joints + IDs
-    for (let i = 0; i < smoothed.length; i++) {
-      const lm = smoothed[i];
-      if (!isValid(lm, i)) continue;
-
-      const x = lm.x * w;
-      const y = lm.y * h;
-
-      let color = "white";
-
-      if (opts.velocityColor.checked && prev) {
-        let v = Math.hypot(
-          x - prev[i].x * w,
-          y - prev[i].y * h
-        );
-        v = Math.min(200, v * 0.7);
-        color = velocityToColor(v);
-      }
-
-      trailCtx.fillStyle = color;
-      trailCtx.beginPath();
-      trailCtx.arc(x, y, 3, 0, Math.PI * 2);
-      trailCtx.fill();
-
-      if (opts.drawIds.checked) {
-        ctx.fillStyle = color;
-        ctx.font = `${opts.idSize.value}px system-ui, sans-serif`;
-        ctx.fillText(String(i), x + 8, y - 8);
-      }
-    }
-  }
-
-  ctx.drawImage(trailCanvas, 0, 0);
-
-  if (opts.scanlines.checked) drawScanlines();
-}
-
-function drawScanlines() {
-  const strength = parseFloat(opts.scanStrength.value);
-
-  ctx.fillStyle = `rgba(0,0,0,${strength})`;
-
-  for (let y = 0; y < canvas.height; y += 4) {
-    ctx.fillRect(0, y, canvas.width, 2);
+  if (opts.trails.checked) {
+    ctx.drawImage(trailCanvas, 0, 0);
   }
 }
+
+async function process() {
+  if (!pose) await createPose();
+
+  canvas.width = 1080;
+  canvas.height = 1920;
+
+  trailCanvas.width = canvas.width;
+  trailCanvas.height = canvas.height;
+
+  function step() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawFitted(video, ctx);
+
+    const now = performance.now();
+
+    const result = pose.detectForVideo(video, now);
+
+    if (result.landmarks) {
+      drawOverlays(result.landmarks.map(l => ({ landmarks: [l] })));
+    }
+
+    if (opts.scanlines.checked) {
+      applyScanlines();
+    }
+
+    requestAnimationFrame(step);
+  }
+
+  step();
+}
+
+document.getElementById("fileInput").addEventListener("change", e => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const url = URL.createObjectURL(file);
+  video.src = url;
+  video.play();
+
+  video.onloadeddata = () => process();
+});
+
+[opts.detConf, opts.trkConf, opts.numPoses].forEach(el => {
+  el.addEventListener("input", () => createPose());
+});
