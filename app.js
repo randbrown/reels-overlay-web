@@ -1,7 +1,7 @@
 import { PoseLandmarker, FilesetResolver } from 
 "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
-// Same connection list as MediaPipe Pose
+// Pose connection topology (same as MediaPipe)
 const POSE_CONNECTIONS = [
   [11,12],[11,13],[13,15],[12,14],[14,16],
   [11,23],[12,24],[23,24],
@@ -17,9 +17,11 @@ const fileInput = document.getElementById("fileInput");
 const opts = {
   trail: document.getElementById("trail"),
   trailAlpha: document.getElementById("trailAlpha"),
+  smoothing: document.getElementById("smoothing"),
   drawIds: document.getElementById("drawIds"),
   velocityColor: document.getElementById("velocityColor"),
   scanlines: document.getElementById("scanlines"),
+  scanStrength: document.getElementById("scanStrength"),
   codeOverlay: document.getElementById("codeOverlay")
 };
 
@@ -28,7 +30,7 @@ let pose;
 let trailCanvas = document.createElement("canvas");
 let trailCtx = trailCanvas.getContext("2d");
 
-// ----- Improved Pose Initialization (Heavy Model) -----
+// ----- Initialize heavy pose model -----
 async function initPose() {
   const vision = await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
@@ -48,7 +50,7 @@ async function initPose() {
 
 await initPose();
 
-// ----- Aspect ratio fitting like fit_to_reels -----
+// Aspect ratio fitting (like fit_to_reels)
 function drawFitted(video) {
   const w = canvas.width;
   const h = canvas.height;
@@ -78,9 +80,11 @@ fileInput.onchange = e => {
   startProcessing(file);
 };
 
-// ----- Temporal smoothing -----
-function smoothLandmarks(current, prev, alpha = 0.75) {
+// Temporal smoothing using slider
+function smoothLandmarks(current, prev) {
   if (!prev) return current;
+
+  const alpha = parseFloat(opts.smoothing.value);
 
   return current.map((lm, i) => ({
     x: alpha * prev[i].x + (1 - alpha) * lm.x,
@@ -89,18 +93,13 @@ function smoothLandmarks(current, prev, alpha = 0.75) {
   }));
 }
 
-// ----- Visibility filter -----
 function isValid(lm) {
   return lm.visibility !== undefined && lm.visibility > 0.5;
 }
 
-// ----- Stabilized velocity coloring -----
+// Stabilized velocity coloring
 function velocityToColor(v) {
-  const vMin = 0;
-  const vMax = 200;
-
-  let t = (v - vMin) / (vMax - vMin);
-  t = Math.max(0, Math.min(1, t));
+  let t = Math.max(0, Math.min(1, v / 200));
 
   if (t < 0.5) {
     const a = t / 0.5;
@@ -143,7 +142,6 @@ async function startProcessing(file) {
 
     if (results.landmarks && results.landmarks.length > 0) {
 
-      // Apply smoothing before rendering
       const smoothed = smoothLandmarks(results.landmarks[0], prevLandmarks);
 
       drawOverlays(smoothed, prevLandmarks);
@@ -155,13 +153,11 @@ async function startProcessing(file) {
   });
 }
 
-// ----- Core renderer -----
 function drawOverlays(landmarks, prev) {
 
   const w = canvas.width;
   const h = canvas.height;
 
-  // fade trails buffer
   if (opts.trail.checked) {
     trailCtx.globalAlpha = parseFloat(opts.trailAlpha.value);
     trailCtx.drawImage(trailCanvas, 0, 0);
@@ -169,7 +165,7 @@ function drawOverlays(landmarks, prev) {
     trailCtx.clearRect(0, 0, w, h);
   }
 
-  // draw skeleton connections
+  // draw skeleton lines
   for (const [a, b] of POSE_CONNECTIONS) {
 
     const pa = landmarks[a];
@@ -185,10 +181,11 @@ function drawOverlays(landmarks, prev) {
     let color = "white";
 
     if (opts.velocityColor.checked && prev) {
-      const v = Math.min(200, Math.hypot(
+      let v = Math.hypot(
         x1 - prev[a].x * w,
         y1 - prev[a].y * h
-      ));
+      );
+      v = Math.min(200, v * 0.7);
       color = velocityToColor(v);
     }
 
@@ -214,10 +211,11 @@ function drawOverlays(landmarks, prev) {
     let color = "white";
 
     if (opts.velocityColor.checked && prev) {
-      const v = Math.min(200, Math.hypot(
+      let v = Math.hypot(
         x - prev[i].x * w,
         y - prev[i].y * h
-      ));
+      );
+      v = Math.min(200, v * 0.7);
       color = velocityToColor(v);
     }
 
@@ -241,8 +239,11 @@ function drawOverlays(landmarks, prev) {
 }
 
 function drawScanlines() {
-  ctx.fillStyle = "rgba(0,0,0,0.06)";
-  for (let y = 0; y < canvas.height; y += 2) {
-    ctx.fillRect(0, y, canvas.width, 1);
+  const strength = parseFloat(opts.scanStrength.value);
+
+  ctx.fillStyle = `rgba(0,0,0,${strength})`;
+
+  for (let y = 0; y < canvas.height; y += 4) {
+    ctx.fillRect(0, y, canvas.width, 2);
   }
 }
