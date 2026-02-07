@@ -11,56 +11,74 @@
 
   <input type="file" id="fileInput" accept="video/*" />
 
-  
-    
-    <div class="controls">
+  <div class="controls">
 
-  <label><input type="checkbox" id="trail" checked> Trails</label>
+    <label class="row">
+      <span>Trails</span>
+      <input type="checkbox" id="trail" checked>
+    </label>
 
-  <label>
-    Trail Alpha
-    <input type="range" id="trailAlpha" min="0.4" max="0.95" step="0.01" value="0.75">
-  </label>
+    <label class="row">
+      <span>Trail Fade</span>
+      <input type="range" id="trailFade" min="0.75" max="0.995" step="0.001" value="0.93">
+    </label>
 
-  <label>
-    Trail Decay
-    <input type="range" id="trailDecay" min="0.80" max="1.0" step="0.01" value="0.94">
-  </label>
+    <label class="row">
+      <span>Trail Draw Alpha</span>
+      <input type="range" id="trailDrawAlpha" min="0.05" max="1.0" step="0.01" value="0.55">
+    </label>
 
-  <label>
-    Smoothing
-    <input type="range" id="smoothing" min="0.5" max="0.95" step="0.01" value="0.78">
-  </label>
+    <label class="row">
+      <span>Smoothing</span>
+      <input type="range" id="smoothing" min="0.5" max="0.95" step="0.01" value="0.78">
+    </label>
 
-  <label><input type="checkbox" id="drawIds" checked> Draw IDs</label>
+    <label class="row">
+      <span>Draw IDs</span>
+      <input type="checkbox" id="drawIds" checked>
+    </label>
 
-  <label>
-    ID Size
-    <input type="range" id="idSize" min="10" max="32" step="1" value="18">
-  </label>
+    <label class="row">
+      <span>ID Size</span>
+      <input type="range" id="idSize" min="12" max="40" step="1" value="22">
+    </label>
 
-  <label><input type="checkbox" id="velocityColor" checked> Velocity Color</label>
+    <label class="row">
+      <span>Velocity Color</span>
+      <input type="checkbox" id="velocityColor" checked>
+    </label>
 
-  <label><input type="checkbox" id="scanlines" checked> Scanlines</label>
+    <label class="row">
+      <span>Scanlines</span>
+      <input type="checkbox" id="scanlines" checked>
+    </label>
 
-  <label>
-    Scanline Strength
-    <input type="range" id="scanStrength" min="0.02" max="0.25" step="0.01" value="0.12">
-  </label>
+    <label class="row">
+      <span>Scanline Strength</span>
+      <input type="range" id="scanStrength" min="0.02" max="0.25" step="0.01" value="0.12">
+    </label>
 
-  <label>
-    Detection Confidence
-    <input type="range" id="detConf" min="0.2" max="0.9" step="0.05" value="0.5">
-  </label>
+    <label class="row">
+      <span>Detection Conf</span>
+      <input type="range" id="detConf" min="0.2" max="0.9" step="0.05" value="0.5">
+    </label>
 
-  <label>
-    Tracking Confidence
-    <input type="range" id="trkConf" min="0.2" max="0.9" step="0.05" value="0.5">
-  </label>
+    <label class="row">
+      <span>Tracking Conf</span>
+      <input type="range" id="trkConf" min="0.2" max="0.9" step="0.05" value="0.5">
+    </label>
 
-  <label><input type="checkbox" id="codeOverlay" checked> Code Overlay</label>
+    <label class="row">
+      <span>People</span>
+      <input type="range" id="numPoses" min="1" max="4" step="1" value="1">
+    </label>
 
-</div>
+    <label class="row">
+      <span>Code Overlay</span>
+      <input type="checkbox" id="codeOverlay" checked>
+    </label>
+
+  </div>
 
   <canvas id="view"></canvas>
 
