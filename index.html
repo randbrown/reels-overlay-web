@@ -1,109 +1,92 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Reels Overlay Tool</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="styles.css">
-  <style>
-    #view {
-      max-width: 100%;
-      height: auto;
-    }
-  </style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Pose Tracker Test</title>
+
+<style>
+  body {
+    margin: 0;
+    background: #111;
+    color: white;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+
+  #topbar {
+    padding: 10px;
+    background: #222;
+  }
+
+  #controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  canvas {
+    display: block;
+    max-width: 100%;
+    margin: 0 auto;
+    background: black;
+  }
+
+  label {
+    display: flex;
+    justify-content: space-between;
+  }
+
+  #status {
+    padding: 6px;
+    font-size: 14px;
+  }
+
+  .error {
+    color: #ff8080;
+  }
+</style>
+
 </head>
 
 <body>
-  <h2>Reels Overlay Tool</h2>
 
-  <input type="file" id="fileInput" accept="video/*" />
-  <div id="status" class="status"></div>
+<div id="topbar">
+  <input type="file" id="fileInput" accept="video/*"/>
+  <button id="playBtn">Play</button>
+  <button id="pauseBtn">Pause</button>
+  <button id="restartBtn">Restart</button>
 
-  <div class="playback-controls">
-    <button id="playBtn">Play</button>
-    <button id="pauseBtn">Pause</button>
-    <button id="restartBtn">Restart</button>
-    <button id="exportBtn">Export</button>
-  </div>
+  <div id="status">Idle</div>
+</div>
 
-  <div class="controls">
+<div id="controls">
 
-    <label class="row">
-      <span>Trails</span>
-      <input type="checkbox" id="trail" checked>
-    </label>
+  <label>
+    Smoothing
+    <input id="smoothing" type="range" min="0" max="1" step="0.05" value="0.6">
+  </label>
 
-    <label class="row">
-      <span>Trail Fade</span>
-      <input type="range" id="trailFade" min="0.75" max="0.995" step="0.001" value="0.93">
-      <span class="value" data-for="trailFade"></span>
-    </label>
+  <label>
+    Detection Confidence
+    <input id="detConf" type="range" min="0.1" max="0.6" step="0.05" value="0.25">
+  </label>
 
-    <label class="row">
-      <span>Trail Draw Alpha</span>
-      <input type="range" id="trailDrawAlpha" min="0.05" max="1.0" step="0.01" value="0.55">
-      <span class="value" data-for="trailDrawAlpha"></span>
-    </label>
+  <label>
+    Tracking Confidence
+    <input id="trkConf" type="range" min="0.1" max="0.6" step="0.05" value="0.25">
+  </label>
 
-    <label class="row">
-      <span>Smoothing</span>
-      <input type="range" id="smoothing" min="0.5" max="0.95" step="0.01" value="0.78">
-      <span class="value" data-for="smoothing"></span>
-    </label>
+  <label>
+    Draw IDs
+    <input id="drawIds" type="checkbox">
+  </label>
 
-    <label class="row">
-      <span>Draw IDs</span>
-      <input type="checkbox" id="drawIds" checked>
-    </label>
+</div>
 
-    <label class="row">
-      <span>ID Size</span>
-      <input type="range" id="idSize" min="12" max="40" step="1" value="22">
-      <span class="value" data-for="idSize"></span>
-    </label>
+<canvas id="view" width="1080" height="1920"></canvas>
 
-    <label class="row">
-      <span>Velocity Color</span>
-      <input type="checkbox" id="velocityColor" checked>
-    </label>
+<script type="module" src="app.js?v=1"></script>
 
-    <label class="row">
-      <span>Scanlines</span>
-      <input type="checkbox" id="scanlines" checked>
-    </label>
-
-    <label class="row">
-      <span>Scanline Strength</span>
-      <input type="range" id="scanStrength" min="0.02" max="0.25" step="0.01" value="0.12">
-      <span class="value" data-for="scanStrength"></span>
-    </label>
-
-    <label class="row">
-      <span>Detection Conf</span>
-      <input type="range" id="detConf" min="0.2" max="0.9" step="0.05" value="0.5">
-      <span class="value" data-for="detConf"></span>
-    </label>
-
-    <label class="row">
-      <span>Tracking Conf</span>
-      <input type="range" id="trkConf" min="0.2" max="0.9" step="0.05" value="0.5">
-      <span class="value" data-for="trkConf"></span>
-    </label>
-
-    <label class="row">
-      <span>People</span>
-      <input type="range" id="numPoses" min="1" max="4" step="1" value="1">
-      <span class="value" data-for="numPoses"></span>
-    </label>
-
-    <label class="row">
-      <span>Code Overlay</span>
-      <input type="checkbox" id="codeOverlay" checked>
-    </label>
-
-  </div>
-
-  <canvas id="view"></canvas>
-
-  <script type="module" src="./app.js"></script>
 </body>
 </html>
